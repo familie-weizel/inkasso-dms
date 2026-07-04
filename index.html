@@ -131,6 +131,70 @@ function splitByGroup(list) {
   };
 }
 
+// Feste Spielergruppen für Sammel-Eintragungen (z. B. Materialdienst)
+const GROUPS = {
+  "Materialdienst Sebastian": [
+    "Sebastian Weizel (24)",
+    "David Dantis (20)",
+    "Nick Schäffauer (13)",
+    "Neven Ivancic (7)",
+    "Niclas Haller (17)",
+    "Simon Schultis (27)",
+    "Moritz Güttel (22)",
+    "Dustin Jund (1)",
+    "Kristian Disch (44)",
+  ],
+  "Materialdienst Marvin": [
+    "Marvin Mettenberger (12)",
+    "Levin Zimmermann (6)",
+    "Fabian Amrhein (2)",
+    "Kerim Vanci (55)",
+    "Issa Boye (18)",
+    "Matthis Eggert (33)",
+    "Mehmet Kaya (11)",
+  ],
+  "Materialdienst Ron": [
+    "Ron Schweizer (99)",
+    "Yannick Berger (23)",
+    "Daniel Himmelsbach (16)",
+    "Sandro Rautenberg (9)",
+    "Hendrik Gehring (19)",
+    "Justin Obika (8)",
+    "Martin Butov (10)",
+    "Nelio Lemminger (29)",
+  ],
+  "Alle Spieler": [...ROSTER_PLAYERS],
+  "Trainer & Staff": [...STAFF],
+  "Alte Spieler": [
+    "Dustin Jund (1)",
+    "Fabian Amrhein (2)",
+    "Levin Zimmermann (6)",
+    "Neven Ivancic (7)",
+    "Sandro Rautenberg (9)",
+    "Martin Butov (10)",
+    "Issa Boye (18)",
+    "Hendrik Gehring (19)",
+    "Yannick Berger (23)",
+    "Sebastian Weizel (24)",
+    "Simon Schultis (27)",
+    "Matthis Eggert (33)",
+    "Kristian Disch (44)",
+    "Kerim Vanci (55)",
+  ],
+  "Neue Spieler": [
+    "Justin Obika (8)",
+    "Mehmet Kaya (11)",
+    "Marvin Mettenberger (12)",
+    "Daniel Himmelsbach (16)",
+    "Nick Schäffauer (13)",
+    "Niclas Haller (17)",
+    "David Dantis (20)",
+    "Moritz Güttel (22)",
+    "Nelio Lemminger (29)",
+    "Ron Schweizer (99)",
+  ],
+};
+
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -329,6 +393,8 @@ function StrafenModul() {
   const [ausgabeForm, setAusgabeForm] = useState({ betrag: "", beschreibung: "", datum: todayISO(), zahlungsart: "bar" });
   const [umbuchungForm, setUmbuchungForm] = useState({ betrag: "", datum: todayISO(), richtung: "paypal_zu_bar" });
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [entryMode, setEntryMode] = useState("einzeln"); // "einzeln" | "gruppe"
+  const [selectedGroup, setSelectedGroup] = useState("");
 
   const [form, setForm] = useState({
     spieler: "",
@@ -533,7 +599,32 @@ function StrafenModul() {
 
   function submitEntry(e) {
     e.preventDefault();
-    if (!form.spieler || !form.regel || form.betrag === "") return;
+    if (!form.regel || form.betrag === "") return;
+
+    if (entryMode === "gruppe") {
+      if (!selectedGroup || !GROUPS[selectedGroup]) return;
+      const members = GROUPS[selectedGroup];
+      const newEntries = members.map((spieler) => ({
+        id: uid(),
+        spieler,
+        regel: form.regel,
+        betrag: Number(form.betrag),
+        datum: form.datum,
+        faelligAm: form.faelligAm,
+        notiz: form.notiz.trim(),
+        bezahlt: false,
+        bezahltAm: null,
+        zahlungsart: null,
+      }));
+      const next = [...newEntries, ...strafen];
+      setStrafen(next);
+      persist(players, next, ausgaben);
+      setForm((f) => ({ ...f, notiz: "" }));
+      setToast(`Strafe für ${members.length} Spieler aus „${selectedGroup}“ eingetragen ✓`);
+      return;
+    }
+
+    if (!form.spieler) return;
     const entry = {
       id: uid(),
       spieler: form.spieler,
@@ -777,29 +868,71 @@ function StrafenModul() {
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
               <span className="" style={{ fontSize: 16, lineHeight: 1, display: "inline-block" }}>👥</span> Spieler
             </div>
-            <select
-              value={form.spieler}
-              onChange={(e) => setForm((f) => ({ ...f, spieler: e.target.value }))}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-base bg-white text-slate-800"
-            >
-              <option value="">Spieler auswählen …</option>
-              <optgroup label="Spieler">
-                {splitByGroup(players).spieler.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </optgroup>
-              <optgroup label="Trainer & Staff">
-                {splitByGroup(players).staff.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </optgroup>
-            </select>
-            <button
-              onClick={() => setShowAddPlayer(true)}
-              className="text-xs text-slate-400 mt-1.5"
-            >
-              + Neuen Spieler hinzufügen
-            </button>
+
+            <div className="flex gap-1.5 bg-slate-100 rounded-xl p-1">
+              <button
+                onClick={() => setEntryMode("einzeln")}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${
+                  entryMode === "einzeln" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                Einzeln
+              </button>
+              <button
+                onClick={() => setEntryMode("gruppe")}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${
+                  entryMode === "gruppe" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                Gruppe
+              </button>
+            </div>
+
+            {entryMode === "einzeln" ? (
+              <>
+                <select
+                  value={form.spieler}
+                  onChange={(e) => setForm((f) => ({ ...f, spieler: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-base bg-white text-slate-800"
+                >
+                  <option value="">Spieler auswählen …</option>
+                  <optgroup label="Spieler">
+                    {splitByGroup(players).spieler.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Trainer & Staff">
+                    {splitByGroup(players).staff.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </optgroup>
+                </select>
+                <button
+                  onClick={() => setShowAddPlayer(true)}
+                  className="text-xs text-slate-400 mt-1.5"
+                >
+                  + Neuen Spieler hinzufügen
+                </button>
+              </>
+            ) : (
+              <>
+                <select
+                  value={selectedGroup}
+                  onChange={(e) => setSelectedGroup(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-base bg-white text-slate-800"
+                >
+                  <option value="">Gruppe auswählen …</option>
+                  {Object.keys(GROUPS).map((g) => (
+                    <option key={g} value={g}>{g} ({GROUPS[g].length} Spieler)</option>
+                  ))}
+                </select>
+                {selectedGroup && (
+                  <div className="text-xs text-slate-500 mt-1.5 break-words">
+                    {GROUPS[selectedGroup].join(", ")}
+                  </div>
+                )}
+              </>
+            )}
           </section>
 
           <form onSubmit={submitEntry} className="space-y-4 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
@@ -856,13 +989,19 @@ function StrafenModul() {
 
             <button
               type="submit"
-              disabled={!form.spieler}
+              disabled={entryMode === "gruppe" ? !selectedGroup : !form.spieler}
               className="w-full py-3 rounded-xl bg-gradient-to-br from-blue-900 to-blue-700 text-white font-semibold shadow-md disabled:opacity-40 disabled:shadow-none"
             >
-              Strafe eintragen
+              {entryMode === "gruppe" ? "Strafe für Gruppe eintragen" : "Strafe eintragen"}
             </button>
-            {!form.spieler && (
-              <div className="text-xs text-slate-400 text-center">Bitte zuerst einen Spieler auswählen</div>
+            {entryMode === "gruppe" ? (
+              !selectedGroup && (
+                <div className="text-xs text-slate-400 text-center">Bitte zuerst eine Gruppe auswählen</div>
+              )
+            ) : (
+              !form.spieler && (
+                <div className="text-xs text-slate-400 text-center">Bitte zuerst einen Spieler auswählen</div>
+              )
             )}
           </form>
         </div>
