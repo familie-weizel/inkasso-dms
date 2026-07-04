@@ -52,34 +52,23 @@ const FINE_CATALOG = [
   { regel: "Sonstige Strafe", betrag: null },
 ];
 
-const GIST_ID = "9c3ca238ea9cd0a810eb9705aac230b6";
-const GITHUB_TOKEN = "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";
-const GIST_API_URL = `https://api.github.com/gists/${GIST_ID}`;
-const GIST_FILENAME = "data.json";
+const FIREBASE_DB_URL = "https://strafenkatalog-fc-d-26-27-default-rtdb.europe-west1.firebasedatabase.app";
+const FIREBASE_PATH = "inkasso-data";
 
 async function gistGet() {
-  const res = await fetch(GIST_API_URL, {
-    headers: { Authorization: `token ${GITHUB_TOKEN}` },
-  });
-  if (!res.ok) throw new Error(`Gist laden fehlgeschlagen (${res.status})`);
-  const json = await res.json();
-  const file = json.files && json.files[GIST_FILENAME];
-  if (!file || !file.content || !file.content.trim()) return null;
-  return JSON.parse(file.content);
+  const res = await fetch(`${FIREBASE_DB_URL}/${FIREBASE_PATH}.json`);
+  if (!res.ok) throw new Error(`Laden fehlgeschlagen (${res.status})`);
+  const data = await res.json();
+  return data || null;
 }
 
 async function gistSet(dataObj) {
-  const res = await fetch(GIST_API_URL, {
-    method: "PATCH",
-    headers: {
-      Authorization: `token ${GITHUB_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      files: { [GIST_FILENAME]: { content: JSON.stringify(dataObj) } },
-    }),
+  const res = await fetch(`${FIREBASE_DB_URL}/${FIREBASE_PATH}.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(dataObj),
   });
-  if (!res.ok) throw new Error(`Gist speichern fehlgeschlagen (${res.status})`);
+  if (!res.ok) throw new Error(`Speichern fehlgeschlagen (${res.status})`);
 }
 const MONTH_NAMES = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
 
@@ -375,7 +364,7 @@ function StrafenModul() {
       }
     } catch (e) {
       setPlayers(DEFAULT_PLAYERS);
-      setError("Verbindung zum Gist fehlgeschlagen. Prüfe deine Internetverbindung und versuch's über 🔄 nochmal.");
+      setError("Verbindung zur Datenbank fehlgeschlagen. Prüfe deine Internetverbindung und versuch's über 🔄 nochmal.");
     } finally {
       setLoading(false);
     }
