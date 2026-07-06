@@ -567,7 +567,7 @@ function StrafenModul() {
       }
     } catch (e) {
       setPlayers(DEFAULT_PLAYERS);
-      setError("Verbindung zur Datenbank fehlgeschlagen. Prüfe deine Internetverbindung und versuch's über 🔄 nochmal.");
+      setError(`Verbindung zur Datenbank fehlgeschlagen (${e.message || e}). Prüfe deine Internetverbindung und versuch's über 🔄 nochmal.`);
     } finally {
       setLoading(false);
     }
@@ -598,7 +598,7 @@ function StrafenModul() {
       });
       setError(null);
     } catch (e) {
-      setError("Speichern fehlgeschlagen. Prüfe deine Internetverbindung und versuch's nochmal.");
+      setError(`Speichern fehlgeschlagen (${e.message || e}). Prüfe deine Internetverbindung und versuch's nochmal.`);
     } finally {
       setSaving(false);
     }
@@ -730,7 +730,7 @@ function StrafenModul() {
 
       setToast("Sicherung erstellt ✓");
     } catch (e) {
-      setError("Sicherung fehlgeschlagen. Prüfe deine Internetverbindung und versuch's nochmal.");
+      setError(`Sicherung fehlgeschlagen (${e.message || e}). Prüfe deine Internetverbindung und versuch's nochmal.`);
     } finally {
       setBackupBusy(false);
     }
