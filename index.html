@@ -931,7 +931,7 @@ function StrafenModul() {
 
   const fullMonthSummary = useMemo(() => {
     return players.map((p) => {
-      const entries = monthEntries.filter((e) => e.spieler === p);
+      const entries = monthEntries.filter((e) => e.spieler === p && !e.bezahlt);
       const total = entries.reduce((s, e) => s + effectiveBetrag(e), 0);
       return { spieler: p, entries, total };
     });
@@ -948,7 +948,7 @@ function StrafenModul() {
       .filter((p) => p.paid > 0 || p.open > 0);
   }, [players, monthEntries]);
 
-  const grandTotal = monthEntries.reduce((sum, e) => sum + effectiveBetrag(e), 0);
+  const grandTotal = monthEntries.filter((e) => !e.bezahlt).reduce((sum, e) => sum + effectiveBetrag(e), 0);
 
   function shiftMonth(delta) {
     const [y, m] = uebersichtMonth.split("-").map(Number);
@@ -1479,7 +1479,7 @@ function StrafenModul() {
       {tab === "uebersicht" && (
         <div className="p-4 max-w-lg mx-auto space-y-4 w-full">
           <div className="text-xs text-slate-400 text-center px-4">
-            Auf einen Spieler tippen für die Detailaufstellung.
+            Zeigt nur offene, noch nicht bezahlte Strafen. Auf einen Spieler tippen für die Detailaufstellung.
           </div>
 
           <div className="flex items-center justify-between">
