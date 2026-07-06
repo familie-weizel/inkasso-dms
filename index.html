@@ -390,16 +390,18 @@ async function createAndSharePdf({ title, subtitle, rows, totalLabel, totalValue
     y += ROW_H * Math.max(1, leftText.length ? leftText.length : 1);
   });
 
-  y += 3;
-  doc.setDrawColor(24, 49, 97);
-  doc.setLineWidth(0.6);
-  doc.line(14, y, 196, y);
-  y += 9;
-  doc.setFontSize(12.5);
-  doc.setFont(undefined, "bold");
-  doc.setTextColor(24, 49, 97);
-  doc.text(totalLabel, 14, y);
-  doc.text(totalValue, 196, y, { align: "right" });
+  if (totalLabel) {
+    y += 3;
+    doc.setDrawColor(24, 49, 97);
+    doc.setLineWidth(0.6);
+    doc.line(14, y, 196, y);
+    y += 9;
+    doc.setFontSize(12.5);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(24, 49, 97);
+    doc.text(totalLabel, 14, y);
+    doc.text(totalValue, 196, y, { align: "right" });
+  }
 
   drawPdfFooter(doc);
 
@@ -1016,8 +1018,6 @@ function StrafenModul() {
       title: "Sammelliste",
       subtitle: monthLabel,
       rows: fullMonthSummary.map((p) => ({ left: p.spieler, right: `${p.total.toFixed(2)} €` })),
-      totalLabel: "Gesamt",
-      totalValue: `${grandTotal.toFixed(2)} €`,
       filename: `Sammelliste_${uebersichtMonth}.pdf`,
     });
   }
