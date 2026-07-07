@@ -714,6 +714,30 @@ function StrafenModul() {
     persist(players, strafen, ausgaben, einnahmen, umbuchungen, next);
   }
 
+  function openEmbeddedPdf(dataUri, filename) {
+    try {
+      const base64 = dataUri.split(",")[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (!win) {
+        // Popup blockiert -> als Fallback Download anstoßen
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      setError(`PDF konnte nicht geöffnet werden (${e.message || e}).`);
+    }
+  }
+
   async function runBackup() {
     setBackupBusy(true);
     try {
@@ -2000,30 +2024,30 @@ function StrafenModul() {
           {/* Gruppe: Dokumente */}
           <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-2">
             <div className="text-xs font-bold text-slate-400 uppercase tracking-wide px-1">Dokumente</div>
-            <a
-              href={STRAFKATALOG_PDF}
-              download="Strafkatalog_FC_Denzlingen_2627.pdf"
-              className="flex items-center gap-3 bg-white border border-slate-100 rounded-2xl p-3.5 shadow-sm active:bg-slate-50"
+            <button
+              type="button"
+              onClick={() => openEmbeddedPdf(STRAFKATALOG_PDF, "Strafkatalog_FC_Denzlingen_2627.pdf")}
+              className="w-full flex items-center gap-3 bg-white border border-slate-100 rounded-2xl p-3.5 shadow-sm active:bg-slate-50"
             >
               <span style={{ fontSize: 22, lineHeight: 1, display: "inline-block" }}>📄</span>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 text-left">
                 <div className="text-sm font-semibold text-slate-800">Strafkatalog</div>
                 <div className="text-xs text-slate-400">FC Denzlingen · Saison 26/27</div>
               </div>
               <span className="text-slate-300" style={{ fontSize: 14 }}>›</span>
-            </a>
-            <a
-              href={MATERIALDIENST_PDF}
-              download="Aufgaben_Kabinen_Materialdienst.pdf"
-              className="flex items-center gap-3 bg-white border border-slate-100 rounded-2xl p-3.5 shadow-sm active:bg-slate-50"
+            </button>
+            <button
+              type="button"
+              onClick={() => openEmbeddedPdf(MATERIALDIENST_PDF, "Aufgaben_Kabinen_Materialdienst.pdf")}
+              className="w-full flex items-center gap-3 bg-white border border-slate-100 rounded-2xl p-3.5 shadow-sm active:bg-slate-50"
             >
               <span style={{ fontSize: 22, lineHeight: 1, display: "inline-block" }}>📄</span>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 text-left">
                 <div className="text-sm font-semibold text-slate-800">Aufgaben Kabinen- &amp; Materialdienst</div>
                 <div className="text-xs text-slate-400">FC Denzlingen · Saison 26/27</div>
               </div>
               <span className="text-slate-300" style={{ fontSize: 14 }}>›</span>
-            </a>
+            </button>
             <button
               type="button"
               onClick={() => setShowWerBistDu(true)}
