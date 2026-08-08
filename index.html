@@ -319,10 +319,15 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+let ZAHLTAG_MAP = {}; // wird von der App-Komponente aus der Datenbank befüllt: { "2026-08": "2026-08-06" }
+
 function isOverdue(entry) {
   if (entry.bezahlt) return false;
   if (!entry.faelligAm) return false;
-  const frist = addDaysISO(entry.faelligAm, 7);
+  const monat = monthKey(entry.faelligAm);
+  const zahltag = ZAHLTAG_MAP[monat];
+  if (!zahltag) return false; // kein Zahltag hinterlegt -> keine automatische Verdopplung
+  const frist = addDaysISO(zahltag, 7);
   return todayISO() > frist;
 }
 function effectiveBetrag(entry) {
@@ -529,6 +534,8 @@ function StrafenModul() {
   const [umbuchungen, setUmbuchungen] = useState([]);
   const [auslagen, setAuslagen] = useState([]);
   const [materialdienstPlan, setMaterialdienstPlan] = useState(MATERIALDIENST_PLAN_DEFAULT);
+  const [zahltagUeberschreibungen, setZahltagUeberschreibungen] = useState({});
+  ZAHLTAG_MAP = zahltagUeberschreibungen;
   const [letzteSicherung, setLetzteSicherung] = useState(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [showAddAuslage, setShowAddAuslage] = useState(false);
@@ -602,6 +609,7 @@ function StrafenModul() {
       let loadedUmbuchungen = [];
       let loadedAuslagen = [];
       let loadedMaterialdienstPlan = MATERIALDIENST_PLAN_DEFAULT;
+      let loadedZahltagUeberschreibungen = {};
       let loadedLetzteSicherung = null;
       let hadStoredPlayers = false;
       if (parsed) {
@@ -617,6 +625,7 @@ function StrafenModul() {
         if (parsed.materialdienstPlan && parsed.materialdienstPlan.length) {
           loadedMaterialdienstPlan = parsed.materialdienstPlan;
         }
+        loadedZahltagUeberschreibungen = parsed.zahltagUeberschreibungen || {};
         loadedLetzteSicherung = parsed.letzteSicherung || null;
       }
       const merged = orderPlayers(Array.from(new Set([...loadedPlayers, ...DEFAULT_PLAYERS])));
@@ -627,6 +636,8 @@ function StrafenModul() {
       setUmbuchungen(loadedUmbuchungen);
       setAuslagen(loadedAuslagen);
       setMaterialdienstPlan(loadedMaterialdienstPlan);
+      setZahltagUeberschreibungen(loadedZahltagUeberschreibungen);
+      ZAHLTAG_MAP = loadedZahltagUeberschreibungen;
       setLetzteSicherung(loadedLetzteSicherung);
       if (!hadStoredPlayers || merged.length !== loadedPlayers.length) {
         persist(merged, loadedStrafen, loadedAusgaben, loadedEinnahmen, loadedUmbuchungen, loadedAuslagen, loadedLetzteSicherung, loadedMaterialdienstPlan);
@@ -650,7 +661,7 @@ function StrafenModul() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  async function persist(nextPlayers, nextStrafen, nextAusgaben, nextEinnahmen = einnahmen, nextUmbuchungen = umbuchungen, nextAuslagen = auslagen, nextLetzteSicherung = letzteSicherung, nextMaterialdienstPlan = materialdienstPlan) {
+  async function persist(nextPlayers, nextStrafen, nextAusgaben, nextEinnahmen = einnahmen, nextUmbuchungen = umbuchungen, nextAuslagen = auslagen, nextLetzteSicherung = letzteSicherung, nextMaterialdienstPlan = materialdienstPlan, nextZahltagUeberschreibungen = zahltagUeberschreibungen) {
     setSaving(true);
     try {
       await gistSet({
@@ -662,6 +673,7 @@ function StrafenModul() {
         auslagen: nextAuslagen,
         letzteSicherung: nextLetzteSicherung,
         materialdienstPlan: nextMaterialdienstPlan,
+        zahltagUeberschreibungen: nextZahltagUeberschreibungen,
       });
       setError(null);
       return true;
@@ -833,10 +845,28 @@ function StrafenModul() {
     persist(players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, letzteSicherung, next);
   }
 
+  function setZahltag(monat, datum) {
+    const next = { ...zahltagUeberschreibungen, [monat]: datum };
+    setZahltagUeberschreibungen(next);
+    ZAHLTAG_MAP = next;
+    persist(players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, letzteSicherung, materialdienstPlan, next);
+    setToast("Zahltag gespeichert ✓");
+  }
+
+  function entferneZahltag(monat) {
+    if (!window.confirm("Zahltag für diesen Monat entfernen? Die automatische Verdopplung für diesen Monat wird dadurch sofort zurückgesetzt.")) return;
+    const next = { ...zahltagUeberschreibungen };
+    delete next[monat];
+    setZahltagUeberschreibungen(next);
+    ZAHLTAG_MAP = next;
+    persist(players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, letzteSicherung, materialdienstPlan, next);
+    setToast("Zahltag entfernt ✓");
+  }
+
   async function runBackup() {
     setBackupBusy(true);
     try {
-      const snapshot = { players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, materialdienstPlan };
+      const snapshot = { players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, materialdienstPlan, zahltagUeberschreibungen };
       await saveBackup(snapshot);
       const heute = todayISO();
       const gespeichert = await persist(players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, heute);
@@ -1093,6 +1123,10 @@ function StrafenModul() {
     [strafen]
   );
   const openEntries = useMemo(() => strafen.filter((s) => !s.bezahlt), [strafen]);
+  const offeneMonate = useMemo(() => {
+    const set = new Set(openEntries.filter((e) => e.faelligAm).map((e) => monthKey(e.faelligAm)));
+    return Array.from(set).sort();
+  }, [openEntries]);
   const totalEingenommen = paidEntries.reduce((s, e) => s + effectiveBetrag(e), 0);
   const totalBar = paidEntries.filter((e) => e.zahlungsart === "bar").reduce((s, e) => s + effectiveBetrag(e), 0);
   const totalPaypal = paidEntries.filter((e) => e.zahlungsart === "paypal").reduce((s, e) => s + effectiveBetrag(e), 0);
@@ -1689,6 +1723,53 @@ function StrafenModul() {
 
       {tab === "kasse" && (
         <div className="p-4 max-w-lg mx-auto space-y-6 w-full">
+
+          {/* Gruppe: Zahltage */}
+          <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-2">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide px-1">Zahltage</div>
+            <div className="text-xs text-slate-500 px-1 pb-1">
+              Erst wenn hier ein Zahltag eingetragen ist, läuft ab diesem Datum die 7-Tage-Frist – danach verdoppeln sich unbezahlte Strafen dieses Monats automatisch. Ohne Eintrag passiert nichts.
+            </div>
+            {offeneMonate.length === 0 ? (
+              <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm text-slate-400 text-center">
+                Aktuell keine offenen Strafen.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {offeneMonate.map((monat) => (
+                  <div key={monat} className="bg-white border border-slate-100 rounded-2xl px-4 py-3 flex items-center justify-between gap-2 shadow-sm">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-800">{monthYearLabel(monat + "-01")}</div>
+                      {zahltagUeberschreibungen[monat] ? (
+                        <div className="text-xs text-emerald-700">
+                          Zahltag: {fmtDate(zahltagUeberschreibungen[monat])} · Verdopplung ab {fmtDate(addDaysISO(zahltagUeberschreibungen[monat], 7))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-400">Noch kein Zahltag hinterlegt</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input
+                        type="date"
+                        defaultValue={zahltagUeberschreibungen[monat] || ""}
+                        onChange={(e) => e.target.value && setZahltag(monat, e.target.value)}
+                        className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700"
+                      />
+                      {zahltagUeberschreibungen[monat] && (
+                        <button
+                          type="button"
+                          onClick={() => entferneZahltag(monat)}
+                          className="text-xs text-red-600 underline shrink-0"
+                        >
+                          Entfernen
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Gruppe: Kassenstand & Umbuchung */}
           <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-3">

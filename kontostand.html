@@ -94,10 +94,14 @@ function fmtDate(iso) {
 function monthKey(iso) {
   return iso ? iso.slice(0, 7) : "";
 }
+let ZAHLTAG_MAP = {};
 function isOverdue(entry) {
   if (entry.bezahlt) return false;
   if (!entry.faelligAm) return false;
-  const frist = addDaysISO(entry.faelligAm, 7);
+  const monat = monthKey(entry.faelligAm);
+  const zahltag = ZAHLTAG_MAP[monat];
+  if (!zahltag) return false;
+  const frist = addDaysISO(zahltag, 7);
   return todayISO() > frist;
 }
 function effectiveBetrag(entry) {
@@ -136,6 +140,7 @@ function App() {
       const merged = orderPlayers(Array.from(new Set([...loadedPlayers, ...DEFAULT_PLAYERS])));
       setPlayers(merged);
       setStrafen((data && Array.isArray(data.strafen)) ? data.strafen : []);
+      ZAHLTAG_MAP = (data && data.zahltagUeberschreibungen) || {};
       setLastLoad(new Date());
     } catch (e) {
       setError(`Verbindung fehlgeschlagen (${e.message || e}). Prüfe deine Internetverbindung und versuch's nochmal.`);
