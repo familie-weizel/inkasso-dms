@@ -258,8 +258,7 @@ function App() {
         ) : (
           <>
             <div className="text-xs text-slate-400 text-center px-4">
-              Zeigt nur offene, noch nicht bezahlte Strafen &middot; nur zum Ansehen, keine Bearbeitung möglich.
-              {lastLoad && <> Stand: {lastLoad.toLocaleDateString("de-DE")}, {lastLoad.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} Uhr</>}
+              {lastLoad && <>Stand: {lastLoad.toLocaleDateString("de-DE")}, {lastLoad.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} Uhr</>}
             </div>
 
             <div className="space-y-2">
