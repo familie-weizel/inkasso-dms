@@ -215,6 +215,13 @@ function addWeeksISO(iso, weeks) {
   d.setDate(d.getDate() + 7 * weeks);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+function findCurrentWeekIndex(plan) {
+  const today = todayISO();
+  for (let i = 0; i < plan.length; i++) {
+    if (today < addWeeksISO(plan[i].weekStart, 1)) return i;
+  }
+  return Math.max(plan.length - 1, 0);
+}
 
 // Annahme: Gruppe 1 = Sebastians Liste, Gruppe 2 = Marvins Liste, Gruppe 3 = Rons Liste
 const MATERIALDIENST_GRUPPEN_NAMEN = {
@@ -594,7 +601,8 @@ function StrafenModul() {
   const [umbuchungenLimit, setUmbuchungenLimit] = useState(5);
   const [einnahmenLimit, setEinnahmenLimit] = useState(5);
   const [ausgabenLimit, setAusgabenLimit] = useState(5);
-  const [materialkalenderLimit, setMaterialkalenderLimit] = useState(8);
+  const [materialkalenderForward, setMaterialkalenderForward] = useState(7);
+  const [materialkalenderBackward, setMaterialkalenderBackward] = useState(0);
   const [editMaterialdienstIndex, setEditMaterialdienstIndex] = useState(null);
 
   const [uebersichtMonth, setUebersichtMonth] = useState(monthKey(todayISO()));
@@ -1148,6 +1156,9 @@ function StrafenModul() {
     [strafen]
   );
   const openEntries = useMemo(() => strafen.filter((s) => !s.bezahlt), [strafen]);
+  const materialdienstCurrentIdx = useMemo(() => findCurrentWeekIndex(materialdienstPlan), [materialdienstPlan]);
+  const materialkalenderStart = Math.max(0, materialdienstCurrentIdx - materialkalenderBackward);
+  const materialkalenderEnd = Math.min(materialdienstPlan.length, materialdienstCurrentIdx + 1 + materialkalenderForward);
   const offeneMonate = useMemo(() => {
     const set = new Set(openEntries.filter((e) => e.faelligAm).map((e) => monthKey(e.faelligAm)));
     return Array.from(set).sort();
@@ -2296,47 +2307,51 @@ function StrafenModul() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {materialdienstPlan.slice(0, materialkalenderLimit).map((row, i) => (
-                    <tr key={row.weekStart} className="text-slate-700">
-                      <td className="py-2 pl-3 font-semibold text-slate-500">{isoWeekNumber(row.weekStart)}</td>
-                      <td className="py-2 text-xs text-slate-400 whitespace-nowrap">{formatWeekRange(row.weekStart)}</td>
-                      <td className="py-2">{row.gruppe ? `Gruppe ${row.gruppe}` : "–"}</td>
-                      <td className="py-2 pr-3 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => setEditMaterialdienstIndex(i)}
-                          className="text-xs text-blue-700 underline"
-                        >
-                          Ändern
-                        </button>
-                        {row.gruppe && (
+                  {materialdienstPlan.slice(materialkalenderStart, materialkalenderEnd).map((row, i) => {
+                    const realIndex = materialkalenderStart + i;
+                    const isCurrent = realIndex === materialdienstCurrentIdx;
+                    return (
+                      <tr key={row.weekStart} className={isCurrent ? "bg-blue-50 font-semibold text-blue-900" : "text-slate-700"}>
+                        <td className="py-2 pl-3 font-semibold">{isoWeekNumber(row.weekStart)}{isCurrent && " •"}</td>
+                        <td className={`py-2 text-xs whitespace-nowrap ${isCurrent ? "text-blue-700" : "text-slate-400"}`}>{formatWeekRange(row.weekStart)}</td>
+                        <td className="py-2">{row.gruppe ? `Gruppe ${row.gruppe}` : "–"}</td>
+                        <td className="py-2 pr-3 text-right whitespace-nowrap">
                           <button
                             type="button"
-                            onClick={() => verlaengereMaterialdienst(i)}
-                            className="text-xs text-amber-700 underline ml-2"
+                            onClick={() => setEditMaterialdienstIndex(realIndex)}
+                            className="text-xs text-blue-700 underline"
                           >
-                            Verlängerung
+                            Ändern
                           </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                          {row.gruppe && (
+                            <button
+                              type="button"
+                              onClick={() => verlaengereMaterialdienst(realIndex)}
+                              className="text-xs text-amber-700 underline ml-2"
+                            >
+                              Verlängerung
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-              {materialdienstPlan.length > materialkalenderLimit && (
+              {materialkalenderStart > 0 && (
                 <button
-                  onClick={() => setMaterialkalenderLimit((n) => n + 10)}
-                  className="w-full py-2.5 text-xs font-semibold text-blue-700 border-t border-slate-100"
+                  onClick={() => setMaterialkalenderBackward((n) => n + 10)}
+                  className="w-full py-2.5 text-xs font-semibold text-slate-500 border-t border-slate-100"
                 >
-                  Weitere anzeigen ({materialdienstPlan.length - materialkalenderLimit} mehr)
+                  Vorherige anzeigen ({materialkalenderStart} mehr)
                 </button>
               )}
-              {materialkalenderLimit > 8 && materialdienstPlan.length <= materialkalenderLimit && (
+              {materialkalenderEnd < materialdienstPlan.length && (
                 <button
-                  onClick={() => setMaterialkalenderLimit(8)}
-                  className="w-full py-2.5 text-xs font-semibold text-slate-400 border-t border-slate-100"
+                  onClick={() => setMaterialkalenderForward((n) => n + 10)}
+                  className="w-full py-2.5 text-xs font-semibold text-blue-700 border-t border-slate-100"
                 >
-                  Weniger anzeigen
+                  Weitere anzeigen ({materialdienstPlan.length - materialkalenderEnd} mehr)
                 </button>
               )}
               <button
@@ -2347,7 +2362,7 @@ function StrafenModul() {
               </button>
             </div>
             <div className="text-xs text-slate-400 px-1">
-              Stand: Materialdienst-Plan 26/27. "Verlängerung" trägt eine Zusatzwoche ein und schiebt alle folgenden Wochen automatisch weiter.
+              Stand: Materialdienst-Plan 26/27. Aktuelle Woche ist markiert. "Verlängerung" trägt eine Zusatzwoche ein und schiebt alle folgenden Wochen automatisch weiter.
             </div>
 
             <div className="grid grid-cols-3 gap-2 pt-1">
