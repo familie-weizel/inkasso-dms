@@ -300,7 +300,7 @@ function todayISO() {
 function addDaysISO(iso, days) {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function nextMonthFirstISO(iso) {
   const d = new Date(iso + "T00:00:00");
@@ -326,29 +326,30 @@ function uid() {
 
 let ZAHLTAG_MAP = {}; // wird von der App-Komponente aus der Datenbank befüllt: { "2026-08": "2026-08-06" }
 
+// Keine automatische Verdopplung mehr. Verdoppelt wird nur noch per Bestätigung (Kasse -> "Verdopplung fällig"):
+// die Strafe wandert dann verdoppelt in den nächsten Monat. Bereits bezahlte Alt-Einträge behalten ihren Betrag.
 function isOverdue(entry) {
-  if (entry.bezahlt) return false;
-  if (!entry.faelligAm) return false;
-  const monat = monthKey(entry.faelligAm);
-  const zahltag = ZAHLTAG_MAP[monat];
-  if (!zahltag) return false; // kein Zahltag hinterlegt -> keine automatische Verdopplung
-  const frist = addDaysISO(zahltag, 7);
-  return todayISO() > frist;
+  return false;
 }
 function effectiveBetrag(entry) {
   if (entry.art === "kasten") return 0;
   const base = Number(entry.betrag) || 0;
-  if (entry.bezahlt) {
-    return entry.verdoppeltBeiZahlung ? base * 2 : base;
-  }
-  return isOverdue(entry) ? base * 2 : base;
+  return entry.bezahlt && entry.verdoppeltBeiZahlung ? base * 2 : base;
 }
 function effectiveKastenAnzahl(entry) {
   const base = Number(entry.kastenAnzahl) || 0;
-  if (entry.bezahlt) {
-    return entry.verdoppeltBeiZahlung ? base * 2 : base;
-  }
-  return isOverdue(entry) ? base * 2 : base;
+  return entry.bezahlt && entry.verdoppeltBeiZahlung ? base * 2 : base;
+}
+// Ab wann ist die Verdopplung für einen Monat fällig? (Zahltag + 7 Tage, ggf. verschoben)
+function verdopplungFaelligAb(monat, verschoben) {
+  const zahltag = ZAHLTAG_MAP[monat];
+  if (!zahltag) return null;
+  const standard = addDaysISO(zahltag, 7);
+  const v = verschoben && verschoben[monat];
+  return v && v > standard ? v : standard;
+}
+function monatsName(iso) {
+  return MONTH_NAMES[Number(iso.slice(5, 7)) - 1];
 }
 function formatEntryWert(entry) {
   if (entry.art === "kasten") {
@@ -366,7 +367,7 @@ function formatEntryWertBasis(entry) {
 }
 function statusOf(entry) {
   if (entry.bezahlt) return { label: "Bezahlt", cls: "bg-emerald-100 text-emerald-700 border-emerald-300" };
-  if (isOverdue(entry)) return { label: "Überfällig · verdoppelt", cls: "bg-red-100 text-red-700 border-red-300" };
+  if (entry.uebertragen) return { label: "Übertragen", cls: "bg-slate-100 text-slate-600 border-slate-300" };
   return { label: "Offen", cls: "bg-amber-100 text-amber-700 border-amber-300" };
 }
 
@@ -541,6 +542,12 @@ function StrafenModul() {
   const [materialdienstPlan, setMaterialdienstPlan] = useState(MATERIALDIENST_PLAN_DEFAULT);
   const [zahltagUeberschreibungen, setZahltagUeberschreibungen] = useState({});
   ZAHLTAG_MAP = zahltagUeberschreibungen;
+  const [verdopplungVerschoben, setVerdopplungVerschoben] = useState({}); // { "2026-09": "2026-10-20" }
+  const [verdopplungModal, setVerdopplungModal] = useState(null); // { monat, ids: { [id]: true } }
+  const [verdopplungDatum, setVerdopplungDatum] = useState("");
+  const [startBannerOffen, setStartBannerOffen] = useState(true);
+  const [showKaesten, setShowKaesten] = useState(false);
+  const [showUebertraege, setShowUebertraege] = useState(false);
   const [letzteSicherung, setLetzteSicherung] = useState(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [showAddAuslage, setShowAddAuslage] = useState(false);
@@ -619,6 +626,7 @@ function StrafenModul() {
       let loadedAuslagen = [];
       let loadedMaterialdienstPlan = MATERIALDIENST_PLAN_DEFAULT;
       let loadedZahltagUeberschreibungen = {};
+      let loadedVerdopplungVerschoben = {};
       let loadedLetzteSicherung = null;
       let hadStoredPlayers = false;
       if (parsed) {
@@ -635,6 +643,7 @@ function StrafenModul() {
           loadedMaterialdienstPlan = parsed.materialdienstPlan;
         }
         loadedZahltagUeberschreibungen = parsed.zahltagUeberschreibungen || {};
+        loadedVerdopplungVerschoben = parsed.verdopplungVerschoben || {};
         loadedLetzteSicherung = parsed.letzteSicherung || null;
       }
       const merged = orderPlayers(Array.from(new Set([...loadedPlayers, ...DEFAULT_PLAYERS])));
@@ -647,9 +656,10 @@ function StrafenModul() {
       setMaterialdienstPlan(loadedMaterialdienstPlan);
       setZahltagUeberschreibungen(loadedZahltagUeberschreibungen);
       ZAHLTAG_MAP = loadedZahltagUeberschreibungen;
+      setVerdopplungVerschoben(loadedVerdopplungVerschoben);
       setLetzteSicherung(loadedLetzteSicherung);
       if (!hadStoredPlayers || merged.length !== loadedPlayers.length) {
-        persist(merged, loadedStrafen, loadedAusgaben, loadedEinnahmen, loadedUmbuchungen, loadedAuslagen, loadedLetzteSicherung, loadedMaterialdienstPlan);
+        persist(merged, loadedStrafen, loadedAusgaben, loadedEinnahmen, loadedUmbuchungen, loadedAuslagen, loadedLetzteSicherung, loadedMaterialdienstPlan, loadedZahltagUeberschreibungen, loadedVerdopplungVerschoben);
       }
     } catch (e) {
       setPlayers(DEFAULT_PLAYERS);
@@ -670,7 +680,7 @@ function StrafenModul() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  async function persist(nextPlayers, nextStrafen, nextAusgaben, nextEinnahmen = einnahmen, nextUmbuchungen = umbuchungen, nextAuslagen = auslagen, nextLetzteSicherung = letzteSicherung, nextMaterialdienstPlan = materialdienstPlan, nextZahltagUeberschreibungen = zahltagUeberschreibungen) {
+  async function persist(nextPlayers, nextStrafen, nextAusgaben, nextEinnahmen = einnahmen, nextUmbuchungen = umbuchungen, nextAuslagen = auslagen, nextLetzteSicherung = letzteSicherung, nextMaterialdienstPlan = materialdienstPlan, nextZahltagUeberschreibungen = zahltagUeberschreibungen, nextVerdopplungVerschoben = verdopplungVerschoben) {
     setSaving(true);
     try {
       await gistSet({
@@ -683,6 +693,7 @@ function StrafenModul() {
         letzteSicherung: nextLetzteSicherung,
         materialdienstPlan: nextMaterialdienstPlan,
         zahltagUeberschreibungen: nextZahltagUeberschreibungen,
+        verdopplungVerschoben: nextVerdopplungVerschoben,
       });
       setError(null);
       return true;
@@ -878,7 +889,7 @@ function StrafenModul() {
   }
 
   function entferneZahltag(monat) {
-    if (!window.confirm("Zahltag für diesen Monat entfernen? Die automatische Verdopplung für diesen Monat wird dadurch sofort zurückgesetzt.")) return;
+    if (!window.confirm("Zahltag für diesen Monat entfernen? Der Hinweis „Verdopplung fällig“ verschwindet dann, bis wieder ein Zahltag eingetragen ist.")) return;
     const next = { ...zahltagUeberschreibungen };
     delete next[monat];
     setZahltagUeberschreibungen(next);
@@ -890,7 +901,7 @@ function StrafenModul() {
   async function runBackup() {
     setBackupBusy(true);
     try {
-      const snapshot = { players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, materialdienstPlan, zahltagUeberschreibungen };
+      const snapshot = { players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, materialdienstPlan, zahltagUeberschreibungen, verdopplungVerschoben };
       await saveBackup(snapshot);
       const heute = todayISO();
       const gespeichert = await persist(players, strafen, ausgaben, einnahmen, umbuchungen, auslagen, heute);
@@ -1029,17 +1040,33 @@ function StrafenModul() {
       );
       setStrafen(next);
       persist(players, next, ausgaben);
+    } else if (entry.art === "kasten") {
+      einloesenKasten(id);
     } else {
       setPaymentPopup({ id });
     }
+  }
+
+  // Kasten einlösen: kein Geld fließt, daher keine Abfrage nach Bar/PayPal
+  function einloesenKasten(id) {
+    const entry = strafen.find((s) => s.id === id);
+    if (!entry) return;
+    if (!window.confirm(`Kasten von ${entry.spieler} als eingelöst markieren?`)) return;
+    const next = strafen.map((s) =>
+      s.id === id
+        ? { ...s, bezahlt: true, bezahltAm: todayISO(), zahlungsart: null, eingeloest: true, eingeloestVon: meinKuerzel.trim() || null, verdoppeltBeiZahlung: false }
+        : s
+    );
+    setStrafen(next);
+    persist(players, next, ausgaben);
+    setToast("Kasten eingelöst ✓");
   }
 
   function confirmPayment(method) {
     if (!paymentPopup) return;
     const next = strafen.map((s) => {
       if (s.id !== paymentPopup.id) return s;
-      const warUeberfaellig = isOverdue(s);
-      return { ...s, bezahlt: true, bezahltAm: todayISO(), zahlungsart: method, verdoppeltBeiZahlung: warUeberfaellig };
+      return { ...s, bezahlt: true, bezahltAm: todayISO(), zahlungsart: method, verdoppeltBeiZahlung: false };
     });
     setStrafen(next);
     persist(players, next, ausgaben);
@@ -1047,10 +1074,149 @@ function StrafenModul() {
   }
 
   function deleteEntry(id) {
+    const entry = strafen.find((s) => s.id === id);
+    if (entry && entry.uebertragenAusId) {
+      if (!window.confirm("Das ist eine übertragene (verdoppelte) Strafe. Beim Löschen wird die ursprüngliche Strafe wieder als offen gesetzt. Fortfahren?")) return;
+      const next = strafen
+        .filter((s) => s.id !== id)
+        .map((s) => (s.id === entry.uebertragenAusId ? entferneUebertragFlags(s) : s));
+      setStrafen(next);
+      persist(players, next, ausgaben);
+      return;
+    }
     if (!window.confirm("Diese Strafe wirklich löschen?")) return;
     const next = strafen.filter((s) => s.id !== id);
     setStrafen(next);
     persist(players, next, ausgaben);
+  }
+
+  function entferneUebertragFlags(s) {
+    const { uebertragen, uebertragenAm, uebertragenNachId, uebertragenVon, verdopplungErledigt, ...rest } = s;
+    return rest;
+  }
+
+  // Liest vor jeder Verdopplungs-Änderung die aktuellen Daten frisch aus der Datenbank, damit zwei Kassenwarte
+  // sich nicht gegenseitig überschreiben oder eine Strafe doppelt übertragen. mutate gibt null zurück, wenn nichts zu tun ist.
+  async function aendereMitFrischenDaten(mutate, okText) {
+    setSaving(true);
+    try {
+      const base = (await gistGet()) || {};
+      const frischStrafen = base.strafen || [];
+      const frischVerschoben = base.verdopplungVerschoben || {};
+      const result = mutate({ strafen: frischStrafen, verschoben: frischVerschoben });
+      if (!result) {
+        setStrafen(frischStrafen);
+        setVerdopplungVerschoben(frischVerschoben);
+        setToast("Schon erledigt – Stand aktualisiert");
+        return false;
+      }
+      await gistSet({ ...base, strafen: result.strafen, verdopplungVerschoben: result.verschoben });
+      setStrafen(result.strafen);
+      setVerdopplungVerschoben(result.verschoben);
+      setError(null);
+      if (okText) setToast(okText);
+      return true;
+    } catch (e) {
+      setError(`Speichern fehlgeschlagen (${e.message || e}). Prüfe deine Internetverbindung und versuch's nochmal.`);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openVerdopplung(monat) {
+    const f = faelligeVerdopplungen.find((x) => x.monat === monat);
+    if (!f) return;
+    const ids = {};
+    f.items.forEach((e) => { ids[e.id] = true; });
+    setVerdopplungDatum("");
+    setVerdopplungModal({ monat, ids });
+  }
+
+  async function verdopplungUebertragen() {
+    if (!verdopplungModal) return;
+    const ids = Object.keys(verdopplungModal.ids).filter((k) => verdopplungModal.ids[k]);
+    if (ids.length === 0) return;
+    const kuerzel = meinKuerzel.trim() || null;
+    const ok = await aendereMitFrischenDaten(({ strafen: liste, verschoben }) => {
+      const neue = [];
+      const next = liste.map((e) => {
+        if (!ids.includes(e.id)) return e;
+        if (e.bezahlt || e.uebertragen || e.verdopplungErledigt || e.art === "kasten") return e; // schon bearbeitet
+        const neuId = uid();
+        const datumNeu = nextMonthFirstISO(e.datum);
+        neue.push({
+          id: neuId,
+          spieler: e.spieler,
+          regel: e.regel,
+          art: "geld",
+          betrag: (Number(e.betrag) || 0) * 2,
+          kastenAnzahl: 0,
+          datum: datumNeu,
+          faelligAm: nextMonthFirstISO(datumNeu),
+          notiz: `aus ${monatsName(e.datum)} übertragen (verdoppelt)` + (e.notiz ? ` · ${e.notiz}` : ""),
+          erfasstVon: kuerzel,
+          bezahlt: false,
+          bezahltAm: null,
+          zahlungsart: null,
+          verdopplungErledigt: true,
+          uebertragenAusId: e.id,
+        });
+        return { ...e, uebertragen: true, uebertragenAm: todayISO(), uebertragenNachId: neuId, uebertragenVon: kuerzel };
+      });
+      if (neue.length === 0) return null;
+      return { strafen: [...neue, ...next], verschoben };
+    }, "Verdoppelt und übertragen ✓");
+    if (ok) setVerdopplungModal(null);
+  }
+
+  async function verdopplungNichtVerdoppeln() {
+    if (!verdopplungModal) return;
+    const ids = Object.keys(verdopplungModal.ids).filter((k) => verdopplungModal.ids[k]);
+    if (ids.length === 0) return;
+    if (!window.confirm(`${ids.length} Strafe(n) bleiben unverdoppelt offen und erscheinen nicht mehr als fällig. Fortfahren?`)) return;
+    const kuerzel = meinKuerzel.trim() || null;
+    const ok = await aendereMitFrischenDaten(({ strafen: liste, verschoben }) => {
+      let geaendert = 0;
+      const next = liste.map((e) => {
+        if (!ids.includes(e.id) || e.bezahlt || e.uebertragen || e.verdopplungErledigt) return e;
+        geaendert++;
+        return { ...e, verdopplungErledigt: true, verdopplungEntscheidVon: kuerzel, verdopplungEntscheidAm: todayISO() };
+      });
+      return geaendert ? { strafen: next, verschoben } : null;
+    }, "Nicht verdoppelt ✓");
+    if (ok) setVerdopplungModal(null);
+  }
+
+  async function verdopplungVerschieben(datum) {
+    if (!verdopplungModal || !datum) return;
+    const monat = verdopplungModal.monat;
+    const ok = await aendereMitFrischenDaten(({ strafen: liste, verschoben }) => ({
+      strafen: liste,
+      verschoben: { ...verschoben, [monat]: datum },
+    }), `Erinnerung auf ${fmtDate(datum)} verschoben ✓`);
+    if (ok) setVerdopplungModal(null);
+  }
+
+  async function uebertragZurueckNehmen(origId) {
+    const orig = strafen.find((e) => e.id === origId);
+    if (!orig) return;
+    if (!window.confirm(`Übertrag für ${orig.spieler} zurücknehmen? Die verdoppelte Strafe wird gelöscht, die ursprüngliche ist wieder offen.`)) return;
+    let abgelehnt = false;
+    const ok = await aendereMitFrischenDaten(({ strafen: liste, verschoben }) => {
+      const o = liste.find((e) => e.id === origId);
+      if (!o || !o.uebertragen) return null;
+      const neu = liste.find((e) => e.id === o.uebertragenNachId);
+      if (neu && neu.bezahlt) {
+        abgelehnt = true;
+        return null;
+      }
+      const next = liste
+        .filter((e) => e.id !== o.uebertragenNachId)
+        .map((e) => (e.id === origId ? entferneUebertragFlags(e) : e));
+      return { strafen: next, verschoben };
+    }, "Übertrag zurückgenommen ✓");
+    if (abgelehnt) setToast("Die übertragene Strafe ist schon bezahlt – erst die Zahlung zurücknehmen");
   }
 
   function openEditEntry(entry) {
@@ -1114,7 +1280,7 @@ function StrafenModul() {
     return strafen
       .filter((s) => (filterSpieler ? s.spieler === filterSpieler : true))
       .filter((s) => (filterMonat ? monthKey(s.datum) === filterMonat : true))
-      .filter((s) => (filterStatus ? (filterStatus === "offen" ? !s.bezahlt : s.bezahlt) : true))
+      .filter((s) => (filterStatus ? (filterStatus === "offen" ? !s.bezahlt && !s.uebertragen : s.bezahlt) : true))
       .sort((a, b) => (a.datum < b.datum ? 1 : -1));
   }, [strafen, filterSpieler, filterMonat, filterStatus]);
 
@@ -1125,7 +1291,7 @@ function StrafenModul() {
 
   const fullMonthSummary = useMemo(() => {
     return players.map((p) => {
-      const entries = monthEntries.filter((e) => e.spieler === p && !e.bezahlt);
+      const entries = monthEntries.filter((e) => e.spieler === p && !e.bezahlt && !e.uebertragen);
       const total = entries.reduce((s, e) => s + effectiveBetrag(e), 0);
       return { spieler: p, entries, total };
     });
@@ -1136,13 +1302,13 @@ function StrafenModul() {
       .map((p) => {
         const entries = monthEntries.filter((e) => e.spieler === p);
         const paid = entries.filter((e) => e.bezahlt).reduce((s, e) => s + effectiveBetrag(e), 0);
-        const open = entries.filter((e) => !e.bezahlt).reduce((s, e) => s + effectiveBetrag(e), 0);
+        const open = entries.filter((e) => !e.bezahlt && !e.uebertragen).reduce((s, e) => s + effectiveBetrag(e), 0);
         return { spieler: p, paid, open };
       })
       .filter((p) => p.paid > 0 || p.open > 0);
   }, [players, monthEntries]);
 
-  const grandTotal = monthEntries.filter((e) => !e.bezahlt).reduce((sum, e) => sum + effectiveBetrag(e), 0);
+  const grandTotal = monthEntries.filter((e) => !e.bezahlt && !e.uebertragen).reduce((sum, e) => sum + effectiveBetrag(e), 0);
 
   function shiftMonth(delta) {
     const [y, m] = uebersichtMonth.split("-").map(Number);
@@ -1156,7 +1322,7 @@ function StrafenModul() {
     () => strafen.filter((s) => s.bezahlt).sort((a, b) => (a.bezahltAm < b.bezahltAm ? 1 : -1)),
     [strafen]
   );
-  const openEntries = useMemo(() => strafen.filter((s) => !s.bezahlt), [strafen]);
+  const openEntries = useMemo(() => strafen.filter((s) => !s.bezahlt && !s.uebertragen), [strafen]);
   const materialdienstCurrentIdx = useMemo(() => findCurrentWeekIndex(materialdienstPlan), [materialdienstPlan]);
   const materialkalenderStart = Math.max(0, materialdienstCurrentIdx - materialkalenderBackward);
   const materialkalenderEnd = Math.min(materialdienstPlan.length, materialdienstCurrentIdx + 1 + materialkalenderForward);
@@ -1164,6 +1330,28 @@ function StrafenModul() {
     const set = new Set(openEntries.filter((e) => e.faelligAm).map((e) => monthKey(e.faelligAm)));
     return Array.from(set).sort();
   }, [openEntries]);
+  // Verdopplung fällig: Monate, deren Zahltag + 7 Tage (bzw. verschobenes Datum) erreicht ist und in denen noch Strafen unentschieden sind
+  const faelligeVerdopplungen = useMemo(() => {
+    const heute = todayISO();
+    const result = [];
+    offeneMonate.forEach((monat) => {
+      const ab = verdopplungFaelligAb(monat, verdopplungVerschoben);
+      if (!ab || heute < ab) return;
+      const items = openEntries
+        .filter((e) => e.faelligAm && monthKey(e.faelligAm) === monat && e.art !== "kasten" && !e.verdopplungErledigt && (Number(e.betrag) || 0) > 0)
+        .sort((a, b) => (a.spieler < b.spieler ? -1 : 1));
+      if (items.length) result.push({ monat, ab, items, ueberfaelligSeit: addDaysISO(ab, 3) <= heute });
+    });
+    return result;
+  }, [offeneMonate, openEntries, verdopplungVerschoben, zahltagUeberschreibungen]);
+  const offeneKaestenListe = useMemo(
+    () => openEntries.filter((e) => e.art === "kasten").sort((a, b) => (a.datum < b.datum ? -1 : 1)),
+    [openEntries]
+  );
+  const uebertrageneListe = useMemo(
+    () => strafen.filter((e) => e.uebertragen).sort((a, b) => ((a.uebertragenAm || "") < (b.uebertragenAm || "") ? 1 : -1)),
+    [strafen]
+  );
   const totalEingenommen = paidEntries.reduce((s, e) => s + effectiveBetrag(e), 0);
   const totalBar = paidEntries.filter((e) => e.zahlungsart === "bar").reduce((s, e) => s + effectiveBetrag(e), 0);
   const totalPaypal = paidEntries.filter((e) => e.zahlungsart === "paypal").reduce((s, e) => s + effectiveBetrag(e), 0);
@@ -1597,6 +1785,7 @@ function StrafenModul() {
                       <div className="text-xs text-slate-400 mt-1">
                         {fmtDate(e.datum)} · Auszahlung {monthYearLabel(e.faelligAm)}
                         {e.bezahlt && e.zahlungsart && <> · {e.zahlungsart === "bar" ? "Bar" : "PayPal"}</>}
+                        {e.bezahlt && e.eingeloest && <> · eingelöst</>}
                         {e.erfasstVon && <> · <span className="font-semibold text-slate-500">{e.erfasstVon}</span></>}
                       </div>
                       {e.bearbeitetVon && (
@@ -1767,11 +1956,34 @@ function StrafenModul() {
       {tab === "kasse" && (
         <div className="p-4 max-w-lg mx-auto space-y-6 w-full">
 
+          {/* Hinweis: Verdopplung fällig */}
+          {faelligeVerdopplungen.length > 0 && (
+            <div className="space-y-2">
+              {faelligeVerdopplungen.map((f) => {
+                const vorMonat = monatsName(addDaysISO(f.monat + "-01", -1));
+                return (
+                  <button
+                    key={f.monat}
+                    type="button"
+                    onClick={() => openVerdopplung(f.monat)}
+                    className="w-full flex items-center justify-between gap-2 bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3 text-left shadow-sm active:bg-amber-100"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-amber-900">⚠️ Verdopplung fällig · {vorMonat}</span>
+                      <span className="block text-xs text-amber-700">{f.items.length} {f.items.length === 1 ? "Strafe" : "Strafen"} warten auf deine Entscheidung</span>
+                    </span>
+                    <span className="text-amber-600 text-lg shrink-0">›</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Gruppe: Zahltage */}
           <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-2">
             <div className="text-xs font-bold text-slate-400 uppercase tracking-wide px-1">Zahltage</div>
             <div className="text-xs text-slate-500 px-1 pb-1">
-              Ab eingetragenem Datum: 7 Tage Frist, danach Verdopplung.
+              Zahltag eintragen: 7 Tage später erscheint oben der Hinweis „Verdopplung fällig“. Verdoppelt wird nur nach deiner Bestätigung.
             </div>
             {offeneMonate.length === 0 ? (
               <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm text-slate-400 text-center">
@@ -1785,7 +1997,7 @@ function StrafenModul() {
                       <div className="text-sm font-semibold text-slate-800">{monthYearLabel(monat + "-01")}</div>
                       {zahltagUeberschreibungen[monat] ? (
                         <div className="text-xs text-emerald-700">
-                          Zahltag: {fmtDate(zahltagUeberschreibungen[monat])} · Verdopplung ab {fmtDate(addDaysISO(zahltagUeberschreibungen[monat], 7))}
+                          Zahltag: {fmtDate(zahltagUeberschreibungen[monat])} · Hinweis ab {fmtDate(verdopplungFaelligAb(monat, verdopplungVerschoben))}
                         </div>
                       ) : (
                         <div className="text-xs text-slate-400">Noch kein Zahltag hinterlegt</div>
@@ -1813,6 +2025,94 @@ function StrafenModul() {
               </div>
             )}
           </div>
+
+          {/* Gruppe: Offene Kästen (getrennt vom Geld) */}
+          <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-2">
+            <button
+              type="button"
+              onClick={() => setShowKaesten((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 px-1 text-left"
+            >
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">📦 Offene Kästen</span>
+              <span className="flex items-center gap-2">
+                <span className={`text-xs px-2 py-0.5 rounded-full border ${totalOffeneKaesten > 0 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-white text-slate-400 border-slate-200"}`}>
+                  {totalOffeneKaesten} {totalOffeneKaesten === 1 ? "Kasten" : "Kästen"}
+                </span>
+                <span className="text-slate-300 text-sm">{showKaesten ? "︿" : "﹀"}</span>
+              </span>
+            </button>
+            {showKaesten && (
+              offeneKaestenListe.length === 0 ? (
+                <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm text-slate-400 text-center">
+                  Keine offenen Kästen 🎉
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-xs text-slate-500 px-1">Spätestens beim nächsten Event / Zusammensitzen nach dem Training einlösen.</div>
+                  {offeneKaestenListe.map((e) => (
+                    <div key={e.id} className="bg-white border border-slate-100 rounded-2xl px-4 py-3 flex items-center justify-between gap-2 shadow-sm">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-800 break-words">{e.spieler}</div>
+                        <div className="text-xs text-slate-500 break-words">{e.regel}</div>
+                        <div className="text-xs text-slate-400">{fmtDate(e.datum)} · {formatEntryWert(e)}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => einloesenKasten(e.id)}
+                        className="text-xs px-3 py-2 rounded-lg border bg-emerald-50 text-emerald-700 border-emerald-300 font-semibold shrink-0"
+                      >
+                        Eingelöst
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+
+          {/* Übertragene Strafen (zum Zurücknehmen) */}
+          {uebertrageneListe.length > 0 && (
+            <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-2">
+              <button
+                type="button"
+                onClick={() => setShowUebertraege((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 px-1 text-left"
+              >
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Übertragene Strafen</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-0.5 rounded-full border bg-white text-slate-500 border-slate-200">{uebertrageneListe.length}</span>
+                  <span className="text-slate-300 text-sm">{showUebertraege ? "︿" : "﹀"}</span>
+                </span>
+              </button>
+              {showUebertraege && (
+                <div className="space-y-2">
+                  {uebertrageneListe.map((e) => {
+                    const neu = strafen.find((x) => x.id === e.uebertragenNachId);
+                    return (
+                      <div key={e.id} className="bg-white border border-slate-100 rounded-2xl px-4 py-3 flex items-center justify-between gap-2 shadow-sm">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-800 break-words">{e.spieler}</div>
+                          <div className="text-xs text-slate-500 break-words">{e.regel}</div>
+                          <div className="text-xs text-slate-400">
+                            {Number(e.betrag).toFixed(2)} € → {(Number(e.betrag) * 2).toFixed(2)} € · am {fmtDate(e.uebertragenAm)}
+                            {e.uebertragenVon && <> · {e.uebertragenVon}</>}
+                            {neu && neu.bezahlt && <> · bezahlt</>}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => uebertragZurueckNehmen(e.id)}
+                          className="text-xs px-3 py-2 rounded-lg border bg-slate-50 text-slate-600 border-slate-300 shrink-0"
+                        >
+                          Zurücknehmen
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Gruppe: Kassenstand & Umbuchung */}
           <div className="bg-slate-100/70 border border-slate-200 rounded-3xl p-3 space-y-3">
@@ -2197,10 +2497,12 @@ function StrafenModul() {
                           className={`text-xs px-2 py-0.5 rounded-full border ${
                             e.zahlungsart === "bar"
                               ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                              : "bg-sky-50 text-sky-700 border-sky-300"
+                              : e.zahlungsart === "paypal"
+                              ? "bg-sky-50 text-sky-700 border-sky-300"
+                              : "bg-amber-50 text-amber-700 border-amber-300"
                           }`}
                         >
-                          {e.zahlungsart === "bar" ? "Bar" : "PayPal"}
+                          {e.zahlungsart === "bar" ? "Bar" : e.zahlungsart === "paypal" ? "PayPal" : "Kasten"}
                         </span>
                         <span className="font-semibold text-slate-800 text-sm">
                           {e.art === "kasten" ? formatEntryWert(e) : `+${effectiveBetrag(e).toFixed(2)} €`}
@@ -2389,6 +2691,119 @@ function StrafenModul() {
           <span className="break-words">{toast}</span>
         </div>
       )}
+
+      {/* Start-Banner: Verdopplung seit mehr als 3 Tagen fällig */}
+      {startBannerOffen && !verdopplungModal && faelligeVerdopplungen.some((f) => f.ueberfaelligSeit) && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-xl">
+            <div className="font-semibold text-slate-800 mb-1">⚠️ Verdopplung noch offen</div>
+            <div className="text-sm text-slate-600 mb-4">
+              Die Frist ist seit mehr als 3 Tagen abgelaufen und es wurde noch nichts entschieden. Jetzt ansehen?
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const f = faelligeVerdopplungen.find((x) => x.ueberfaelligSeit);
+                  setStartBannerOffen(false);
+                  setTab("kasse");
+                  if (f) openVerdopplung(f.monat);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-blue-900 text-white text-sm font-semibold"
+              >
+                Ansehen
+              </button>
+              <button onClick={() => setStartBannerOffen(false)} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-sm font-semibold">
+                Später
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Popup: Verdopplung entscheiden */}
+      {verdopplungModal && (() => {
+        const f = faelligeVerdopplungen.find((x) => x.monat === verdopplungModal.monat);
+        if (!f) return null;
+        const gewaehlt = f.items.filter((e) => verdopplungModal.ids[e.id]);
+        const summeNormal = gewaehlt.reduce((sum, e) => sum + (Number(e.betrag) || 0), 0);
+        const vorMonat = monatsName(addDaysISO(f.monat + "-01", -1));
+        const folgeMonat = monatsName(nextMonthFirstISO(addDaysISO(f.monat + "-01", -1)));
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
+            <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-w-md shadow-xl max-h-[92vh] flex flex-col">
+              <div className="px-5 pt-5 pb-3 border-b border-slate-100">
+                <div className="font-semibold text-slate-800">Verdopplung · Strafen aus {vorMonat}</div>
+                <div className="text-xs text-slate-500 mt-0.5">Häkchen raus = diese Strafe bleibt unberührt und bleibt weiter „fällig“.</div>
+              </div>
+              <div className="overflow-y-auto px-5 py-2 divide-y divide-slate-100">
+                {f.items.map((e) => (
+                  <label key={e.id} className="flex items-center gap-3 py-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!verdopplungModal.ids[e.id]}
+                      onChange={() => setVerdopplungModal((m) => ({ ...m, ids: { ...m.ids, [e.id]: !m.ids[e.id] } }))}
+                      className="w-5 h-5 shrink-0"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-slate-800 break-words">{e.spieler}</span>
+                      <span className="block text-xs text-slate-500 break-words">{e.regel}</span>
+                    </span>
+                    <span className="text-sm text-slate-700 shrink-0">
+                      {Number(e.betrag).toFixed(2)} € <span className="text-slate-400">→</span> <span className="font-semibold">{(Number(e.betrag) * 2).toFixed(2)} €</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div className="px-5 pt-3 pb-5 border-t border-slate-100 space-y-2">
+                <div className="text-xs text-slate-500">
+                  {gewaehlt.length} ausgewählt · {summeNormal.toFixed(2)} € werden zu {(summeNormal * 2).toFixed(2)} €
+                </div>
+                <button
+                  onClick={verdopplungUebertragen}
+                  disabled={gewaehlt.length === 0 || saving}
+                  className="w-full py-3 rounded-xl bg-blue-900 text-white text-sm font-semibold disabled:opacity-40"
+                >
+                  Verdoppeln &amp; in {folgeMonat} übertragen
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => verdopplungVerschieben(addDaysISO(todayISO(), 2))}
+                    disabled={saving}
+                    className="flex-1 py-2.5 rounded-xl border border-slate-300 text-slate-600 text-xs font-semibold disabled:opacity-40"
+                  >
+                    +2 Tage
+                  </button>
+                  <button
+                    onClick={() => verdopplungVerschieben(addDaysISO(todayISO(), 7))}
+                    disabled={saving}
+                    className="flex-1 py-2.5 rounded-xl border border-slate-300 text-slate-600 text-xs font-semibold disabled:opacity-40"
+                  >
+                    +1 Woche
+                  </button>
+                  <input
+                    type="date"
+                    min={addDaysISO(todayISO(), 1)}
+                    value={verdopplungDatum}
+                    onChange={(ev) => ev.target.value && verdopplungVerschieben(ev.target.value)}
+                    className="flex-1 min-w-0 border border-slate-300 rounded-xl px-2 text-xs text-slate-600"
+                    aria-label="Verschieben bis Datum"
+                  />
+                </div>
+                <button
+                  onClick={verdopplungNichtVerdoppeln}
+                  disabled={gewaehlt.length === 0 || saving}
+                  className="w-full py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-semibold disabled:opacity-40"
+                >
+                  Nicht verdoppeln (Einzelfall)
+                </button>
+                <button onClick={() => setVerdopplungModal(null)} className="w-full py-2 rounded-lg text-slate-500 text-sm">
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {paymentPopup && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
